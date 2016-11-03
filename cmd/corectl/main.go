@@ -8,24 +8,30 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"chain/core/accesstoken"
 	"chain/core/config"
+	"chain/core/fileutil"
 	"chain/core/migrate"
 	"chain/crypto/ed25519"
+	"chain/database/raft"
 	"chain/database/sql"
-	chainjson "chain/encoding/json"
 	"chain/env"
 	"chain/generated/rev"
 	"chain/log"
+	"chain/protocol/bc"
 )
 
 // config vars
 var (
-	dbURL = env.String("DATABASE_URL", "postgres:///core?sslmode=disable")
+	dbURL      = env.String("DATABASE_URL", "postgres:///core?sslmode=disable")
+	listenAddr = env.String("LISTEN", ":1999")
+	dataDir    = env.String("CORED_DATA_DIR", fileutil.DefaultDir())
+	bootURL    = env.String("BOOTURL", "")
 
 	// build vars; initialized by the linker
 	buildTag    = "?"
@@ -38,7 +44,7 @@ var (
 var logbuf bytes.Buffer
 
 type command struct {
-	f func(*sql.DB, []string)
+	f func(*sql.DB, *raft.Service, []string)
 }
 
 var commands = map[string]*command{
@@ -76,6 +82,12 @@ func main() {
 		os.Exit(2)
 	}
 
+	raftDir := filepath.Join(*dataDir, "raft") // TODO(kr): better name for this
+	raftDB, err := raft.Start(*listenAddr, raftDir, *bootURL)
+	if err != nil {
+		fatalln("error: could not connect to raftDB", err)
+	}
+
 	if len(os.Args) < 2 {
 		help(os.Stdout)
 		os.Exit(0)
@@ -86,10 +98,10 @@ func main() {
 		help(os.Stderr)
 		os.Exit(1)
 	}
-	cmd.f(db, os.Args[2:])
+	cmd.f(db, raftDB, os.Args[2:])
 }
 
-func runMigrations(db *sql.DB, args []string) {
+func runMigrations(db *sql.DB, _ *raft.Service, args []string) {
 	const usage = "usage: corectl migrate [-status]"
 
 	var flags flag.FlagSet
@@ -115,11 +127,11 @@ func runMigrations(db *sql.DB, args []string) {
 	}
 }
 
-func configGenerator(db *sql.DB, args []string) {
+func configGenerator(db *sql.DB, rDB *raft.Service, args []string) {
 	const usage = "usage: corectl config-generator [flags] [quorum] [pubkey url]..."
 	var (
-		quorum  int
-		signers []config.BlockSigner
+		quorum  uint32
+		signers []*config.BlockSigner
 		err     error
 	)
 
@@ -154,10 +166,11 @@ func configGenerator(db *sql.DB, args []string) {
 	} else if len(args)%2 != 1 {
 		fatalln(usage)
 	} else {
-		quorum, err = strconv.Atoi(args[0])
+		q64, err := strconv.ParseUint(args[0], 10, 32)
 		if err != nil {
 			fatalln(usage)
 		}
+		quorum = uint32(q64)
 
 		for i := 1; i < len(args); i += 2 {
 			pubkey, err := hex.DecodeString(args[i])
@@ -168,37 +181,35 @@ func configGenerator(db *sql.DB, args []string) {
 				fatalln("error:", "bad ed25519 public key length")
 			}
 			url := args[i+1]
-			signers = append(signers, config.BlockSigner{
+			signers = append(signers, &config.BlockSigner{
 				Pubkey: pubkey,
-				URL:    url,
+				Url:    url,
 			})
 		}
 	}
 
 	conf := &config.Config{
-		IsGenerator: true,
-		Quorum:      quorum,
-		Signers:     signers,
-		MaxIssuanceWindow: chainjson.Duration{
-			Duration: *maxIssuanceWindow,
-		},
+		IsGenerator:         true,
+		Quorum:              quorum,
+		Signers:             signers,
+		MaxIssuanceWindow:   bc.DurationMillis(*maxIssuanceWindow),
 		IsSigner:            *flagK != "",
 		BlockPub:            *flagK,
-		BlockHSMURL:         *flagHSMURL,
-		BlockHSMAccessToken: *flagHSMToken,
+		BlockHsmUrl:         *flagHSMURL,
+		BlockHsmAccessToken: *flagHSMToken,
 	}
 
 	ctx := context.Background()
 	migrateIfMissingSchema(ctx, db)
-	err = config.Configure(ctx, db, conf)
+	err = config.Configure(ctx, db, rDB, conf)
 	if err != nil {
 		fatalln("error:", err)
 	}
 
-	fmt.Println("blockchain id", conf.BlockchainID)
+	fmt.Println("blockchain id", conf.BlockchainId)
 }
 
-func createToken(db *sql.DB, args []string) {
+func createToken(db *sql.DB, _ *raft.Service, args []string) {
 	const usage = "usage: corectl create-token [-net] [name]"
 	var flags flag.FlagSet
 	flagNet := flags.Bool("net", false, "create a network token instead of client")
@@ -224,7 +235,7 @@ func createToken(db *sql.DB, args []string) {
 	fmt.Println(tok.Token)
 }
 
-func configNongenerator(db *sql.DB, args []string) {
+func configNongenerator(db *sql.DB, rDB *raft.Service, args []string) {
 	const usage = "usage: corectl config [flags] [blockchain-id] [generator-url]"
 	var flags flag.FlagSet
 	flagT := flags.String("t", "", "generator access `token`")
@@ -253,21 +264,24 @@ func configNongenerator(db *sql.DB, args []string) {
 		fatalln("error: flags -hsm-url and -hsm-token must be given together")
 	}
 
-	var conf config.Config
-	err := conf.BlockchainID.UnmarshalText([]byte(args[0]))
+	var blockchainID bc.Hash
+	err := blockchainID.UnmarshalText([]byte(args[0]))
 	if err != nil {
 		fatalln("error: invalid blockchain ID:", err)
 	}
-	conf.GeneratorURL = args[1]
+
+	var conf config.Config
+	conf.BlockchainId = blockchainID.Proto()
+	conf.GeneratorUrl = args[1]
 	conf.GeneratorAccessToken = *flagT
 	conf.IsSigner = *flagK != ""
 	conf.BlockPub = *flagK
-	conf.BlockHSMURL = *flagHSMURL
-	conf.BlockHSMAccessToken = *flagHSMToken
+	conf.BlockHsmUrl = *flagHSMURL
+	conf.BlockHsmAccessToken = *flagHSMToken
 
 	ctx := context.Background()
 	migrateIfMissingSchema(ctx, db)
-	err = config.Configure(ctx, db, &conf)
+	err = config.Configure(ctx, db, rDB, &conf)
 	if err != nil {
 		fatalln("error:", err)
 	}

@@ -20,6 +20,7 @@ import (
 	"chain/core/txdb"
 	"chain/core/txfeed"
 	"chain/database/pg"
+	"chain/database/raft"
 	"chain/log"
 	"chain/protocol"
 	"chain/protocol/bc"
@@ -92,9 +93,10 @@ func RateLimit(keyFn func(*http.Request) string, burst, perSecond int) RunOption
 // used for Chain Core Developer Edition to expose the configuration UI
 // in the dashboard. API authentication still applies to an unconfigured
 // Chain Core.
-func RunUnconfigured(ctx context.Context, db pg.DB, opts ...RunOption) *API {
+func RunUnconfigured(ctx context.Context, db pg.DB, raftDB *raft.Service, opts ...RunOption) *API {
 	a := &API{
 		db:           db,
+		raftDB:       raftDB,
 		accessTokens: &accesstoken.CredentialStore{DB: db},
 		mux:          http.NewServeMux(),
 	}
@@ -102,7 +104,7 @@ func RunUnconfigured(ctx context.Context, db pg.DB, opts ...RunOption) *API {
 		opt(a)
 	}
 	// Construct the complete http.Handler once.
-	a.buildHandler()
+	a.buildCoreHandler()
 	return a
 }
 
@@ -119,6 +121,7 @@ func Run(
 	conf *config.Config,
 	db pg.DB,
 	dbURL string,
+	raftDB *raft.Service,
 	c *protocol.Chain,
 	store *txdb.Store,
 	routableAddress string,
@@ -151,6 +154,7 @@ func Run(
 		accessTokens: &accesstoken.CredentialStore{DB: db},
 		config:       conf,
 		db:           db,
+		raftDB:       raftDB,
 		mux:          http.NewServeMux(),
 		addr:         routableAddress,
 	}
@@ -180,7 +184,7 @@ func Run(
 	a.leader = leader.Run(ctx, db, routableAddress, a.lead)
 
 	// Construct the complete http.Handler once.
-	a.buildHandler()
+	a.buildCoreHandler()
 
 	return a, nil
 }

@@ -195,7 +195,7 @@ func TestMux(t *testing.T) {
 		}
 	}()
 	api := &API{config: &config.Config{}, mux: http.NewServeMux()}
-	api.buildHandler()
+	api.buildCoreHandler()
 }
 
 func TestTransfer(t *testing.T) {
