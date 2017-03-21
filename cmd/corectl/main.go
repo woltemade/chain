@@ -83,7 +83,8 @@ func main() {
 	}
 
 	raftDir := filepath.Join(*dataDir, "raft") // TODO(kr): better name for this
-	raftDB, err := raft.Start(*listenAddr, raftDir, *bootURL)
+	// TODO(tessr): remove tls flag after we have tls everywhere
+	raftDB, err := raft.Start(*listenAddr, raftDir, *bootURL, false)
 	if err != nil {
 		fatalln("error: could not connect to raftDB", err)
 	}
