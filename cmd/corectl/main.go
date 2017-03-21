@@ -193,7 +193,7 @@ func configGenerator(db *sql.DB, rDB *raft.Service, args []string) {
 		IsGenerator:         true,
 		Quorum:              quorum,
 		Signers:             signers,
-		MaxIssuanceWindow:   bc.DurationMillis(*maxIssuanceWindow),
+		MaxIssuanceWindowMs: bc.DurationMillis(*maxIssuanceWindow),
 		IsSigner:            *flagK != "",
 		BlockPub:            *flagK,
 		BlockHsmUrl:         *flagHSMURL,

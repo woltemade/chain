@@ -127,8 +127,8 @@ func (a *API) configure(ctx context.Context, x *config.Config) error {
 		return errAlreadyConfigured
 	}
 
-	if x.IsGenerator && x.MaxIssuanceWindow == 0 {
-		x.MaxIssuanceWindow = bc.DurationMillis(24 * time.Hour)
+	if x.IsGenerator && x.MaxIssuanceWindowMs == 0 {
+		x.MaxIssuanceWindowMs = bc.DurationMillis(24 * time.Hour)
 	}
 
 	err := config.Configure(ctx, a.db, a.raftDB, x)

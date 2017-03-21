@@ -140,7 +140,7 @@ func Configure(ctx context.Context, db pg.DB, rDB *raft.Service, c *Config) erro
 		}
 
 		c.BlockchainId = initialBlockHash.Proto()
-		chain.MaxIssuanceWindow = bc.MillisDuration(c.MaxIssuanceWindow)
+		chain.MaxIssuanceWindow = bc.MillisDuration(c.MaxIssuanceWindowMs)
 	}
 
 	b := make([]byte, 10)

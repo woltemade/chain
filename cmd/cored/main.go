@@ -295,7 +295,7 @@ func launchConfiguredCore(ctx context.Context, raftDB *raft.Service, db *sql.DB,
 		for _, signer := range remoteSignerInfo(ctx, processID, buildTag, conf.BlockchainId.String(), conf) {
 			signers = append(signers, signer)
 		}
-		c.MaxIssuanceWindow = bc.MillisDuration(conf.MaxIssuanceWindow)
+		c.MaxIssuanceWindow = bc.MillisDuration(conf.MaxIssuanceWindowMs)
 
 		gen := generator.New(c, signers, db)
 		opts = append(opts, core.GeneratorLocal(gen))
