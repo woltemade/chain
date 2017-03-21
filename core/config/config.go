@@ -2,6 +2,10 @@
 // Chain Core.
 package config
 
+// The following go:generate command is included in order to generate code for
+// the Config and BlockSigner types.
+//go:generate protoc -I. -I$CHAIN/.. --go_out=. config.proto
+
 import (
 	"context"
 	"crypto/rand"
@@ -21,8 +25,6 @@ import (
 	"chain/protocol/bc"
 	"chain/protocol/state"
 )
-
-//go:generate protoc -I. -I$CHAIN/.. --go_out=. config.proto
 
 const (
 	autoBlockKeyAlias = "_CHAIN_CORE_AUTO_BLOCK_KEY"
